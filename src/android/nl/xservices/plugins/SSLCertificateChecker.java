@@ -33,6 +33,12 @@ public class SSLCertificateChecker extends CordovaPlugin {
 
             final ArrayList<String> serverCertFingerprints = getFingerprints(serverURL);
 
+            android.util.Log.w("Certificate", "Checking " + serverCertFingerprints.size() + " certificates against known fingerprints:" );
+
+            for(int j=0; j<allowedFingerprint.length; j++) {
+                android.util.Log.w("Certificate", "Known fingerprint: " + allowedFingerprint[j] );
+            }
+
 			boolean valid = false;
 			for(int i=0; i<serverCertFingerprints.size(); i++) {
 				for(int j=0; j<allowedFingerprint.length; j++) {
@@ -48,11 +54,14 @@ public class SSLCertificateChecker extends CordovaPlugin {
 			}
 
             if (valid) {
-              callbackContext.success("CONNECTION_SECURE");
+                android.util.Log.w("Certificate", "Connection is secure." );
+                callbackContext.success("CONNECTION_SECURE");
             } else {
-              callbackContext.success("CONNECTION_NOT_SECURE");
+                android.util.Log.e("Certificate", "Connection is not secure." );
+                callbackContext.success("CONNECTION_NOT_SECURE");
             }
           } catch (Exception e) {
+            android.util.Log.e("Certificate", "Error checking thumbprints: " + e.getMessage());
             callbackContext.error("CONNECTION_FAILED. Details: " + e.getMessage());
           }
         }
@@ -69,15 +78,51 @@ public class SSLCertificateChecker extends CordovaPlugin {
 	ArrayList<String> result = new ArrayList<String>();
 	boolean urlValid = false;
 
-	// open connection
-	URL targetUrl = new URL(httpsURL);
-	String host = targetUrl.getHost();
-	android.util.Log.w("Certificate", "Connecting to host: " + host);
-	final HttpsURLConnection con = (HttpsURLConnection) targetUrl.openConnection();
-    con.connect();
+    Certificate[] certs = new Certificate[0];
+    URL targetUrl;
+    String host;
+    final HttpsURLConnection con;
 
-	// get certificates
-    Certificate[] certs = con.getServerCertificates();
+    try
+    {
+        // create connection
+        targetUrl = new URL(httpsURL);
+        host = targetUrl.getHost();
+        android.util.Log.w("Certificate", "Creating connection to host: " + host);
+        con = (HttpsURLConnection) targetUrl.openConnection();
+
+    }
+    catch(Exception e)
+    {
+        android.util.Log.e("Certificate", "Error creating connection to " + httpsURL + ": " + e.getMessage());
+        return result;
+    }
+
+    try
+    {
+        // open connection
+        android.util.Log.w("Certificate", "Opening connection to host: " + host);
+        con.setConnectTimeout(5000);
+        con.setReadTimeout(10000);
+        con.connect();
+    }
+    catch(Exception e)
+    {
+        android.util.Log.e("Certificate", "Error opening connection to " + httpsURL + ": " + e.getMessage());
+        return result;
+    }
+
+    try
+    {
+	    // get certificates
+	    android.util.Log.w("Certificate", "Getting certificates from host: " + host);
+        certs = con.getServerCertificates();
+    }
+    catch(Exception e)
+    {
+        android.util.Log.e("Certificate", "Error getting certificates from " + httpsURL + ": " + e.getMessage());
+        return result;
+    }
 
 	// check certificates
     android.util.Log.w("Certificate", "Certificate count: " + certs.length);
@@ -117,6 +162,11 @@ public class SSLCertificateChecker extends CordovaPlugin {
 					if(host.endsWith(certificateHost))
 					{
 						urlValid = true;
+						android.util.Log.w("Certificate", "Certificate  domain match");
+					}
+					else
+					{
+					    android.util.Log.w("Certificate", "Certificate  domain does not match");
 					}
 				}
 			}
