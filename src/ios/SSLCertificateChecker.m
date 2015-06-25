@@ -32,74 +32,88 @@
 
 // Delegate method, called from connectionWithRequest
 - (void) connection: (NSURLConnection*)connection willSendRequestForAuthenticationChallenge: (NSURLAuthenticationChallenge*)challenge {
-    
-    // sanity check on parameter
-    if([[NSNull null] isEqual:self._allowedFingerprint]) {
-        CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_JSON_EXCEPTION messageAsString:@"CONNECTION_NOT_SECURE"];
-        [self._plugin writeJavascript:[pluginResult toErrorCallbackString:self._callbackId]];
+
+    @try
+    {
+         // sanity check on parameter
+         if([[NSNull null] isEqual:self._allowedFingerprint]) {
+             CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_JSON_EXCEPTION messageAsString:@"CONNECTION_NOT_SECURE"];
+             [self._plugin writeJavascript:[pluginResult toErrorCallbackString:self._callbackId]];
+         }
+
+         BOOL fingerprintMatch = FALSE;
+         BOOL domainMatch = FALSE;
+
+         CFIndex count = SecTrustGetCertificateCount (challenge.protectionSpace.serverTrust);
+         NSLog(@"Certificate: Certificate count: %ld", count);
+
+         NSArray *allowedThumprints = [self._allowedFingerprint componentsSeparatedByString:@","];
+         for(int j=0; j<allowedThumprints.count; j++) {
+             NSLog(@"Certificate: allowed thumbprint %d: %@", j, allowedThumprints[j]);
+         }
+
+         NSURL *url = [NSURL URLWithString:self._serverUrl];
+         NSString *host = [url host];
+         NSLog(@"Certificate: expected host: %@", host);
+
+         NSString *domainPrefix = @"*.";
+
+         for(CFIndex i=0; i<count; i++) {
+
+             // extract thumbprint
+             SecCertificateRef cert = SecTrustGetCertificateAtIndex(challenge.protectionSpace.serverTrust, i);
+             NSString* fingerprint = [self getFingerprint: cert];
+             NSLog(@"Certificate: Certificate %ld thumbprint: %@", i, fingerprint);
+
+             // check thumbprint if not matched yet
+             if(!fingerprintMatch) {
+                 for(int j=0; j<allowedThumprints.count; j++) {
+                     if([fingerprint caseInsensitiveCompare: allowedThumprints[j]] == NSOrderedSame) {
+                         fingerprintMatch = TRUE;
+                         NSLog(@"Certificate: Certificate %ld thumbprint match", i);
+                     }
+                 }
+             }
+
+             CFStringRef summaryRef = SecCertificateCopySubjectSummary(cert);
+             if(summaryRef != NULL) {
+                 NSString *subject = (__bridge NSString *)summaryRef;
+                 NSLog(@"Certificate: Certificate %ld subject: %@", i, subject);
+
+                 if([subject hasPrefix:domainPrefix]) {
+                     subject = [subject substringFromIndex:2];
+                 }
+
+                 NSLog(@"Certificate: Certificate %ld normalized subject: %@", i, subject);
+
+                 if([host hasSuffix:subject]) {
+                     domainMatch = TRUE;
+                 }
+
+                 CFRelease(summaryRef);
+             }
+
+         }
+
+         self.sentResponse = TRUE;
+         if (fingerprintMatch && domainMatch) {
+             CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:@"CONNECTION_SECURE"];
+             [self._plugin writeJavascript:[pluginResult toSuccessCallbackString:self._callbackId]];
+         } else {
+             CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_JSON_EXCEPTION messageAsString:@"CONNECTION_NOT_SECURE"];
+             [self._plugin writeJavascript:[pluginResult toErrorCallbackString:self._callbackId]];
+         }
     }
-    
-    BOOL fingerprintMatch = FALSE;
-    BOOL domainMatch = FALSE;
-    
-    CFIndex count = SecTrustGetCertificateCount (challenge.protectionSpace.serverTrust);
-    NSLog(@"Certificate: Certificate count: %ld", count);
-    
-    NSArray *allowedThumprints = [self._allowedFingerprint componentsSeparatedByString:@","];
-    for(int j=0; j<allowedThumprints.count; j++) {
-        NSLog(@"Certificate: allowed thumbprint %d: %@", j, allowedThumprints[j]);
+    @catch (NSException *exception)
+    {
+         NSLog(@"%@", exception.reason);
+
+         CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_JSON_EXCEPTION messageAsString:@"CONNECTION_NOT_SECURE"];
+         [self._plugin writeJavascript:[pluginResult toErrorCallbackString:self._callbackId]];
+
     }
-    
-    NSURL *url = [NSURL URLWithString:self._serverUrl];
-    NSString *host = [url host];
-    NSLog(@"Certificate: expected host: %@", host);
-    
-    NSString *domainPrefix = @"*.";
-    
-    for(CFIndex i=0; i<count; i++) {
-        
-        // extract thumbprint
-        SecCertificateRef cert = SecTrustGetCertificateAtIndex(challenge.protectionSpace.serverTrust, i);
-        NSString* fingerprint = [self getFingerprint: cert];
-        NSLog(@"Certificate: Certificate %ld thumbprint: %@", i, fingerprint);
-        
-        // check thumbprint if not matched yet
-        if(!fingerprintMatch) {
-            for(int j=0; j<allowedThumprints.count; j++) {
-                if([fingerprint caseInsensitiveCompare: allowedThumprints[j]] == NSOrderedSame) {
-                    fingerprintMatch = TRUE;
-                    NSLog(@"Certificate: Certificate %ld thumbprint match", i);
-                }
-            }
-        }
-        
-        CFStringRef summaryRef = SecCertificateCopySubjectSummary(cert);
-        if(summaryRef != NULL) {
-            NSString *subject = (__bridge NSString *)summaryRef;
-            NSLog(@"Certificate: Certificate %ld subject: %@", i, subject);
-            
-            if([subject hasPrefix:domainPrefix]) {
-                subject = [subject substringFromIndex:2];
-            }
-            
-            NSLog(@"Certificate: Certificate %ld normalized subject: %@", i, subject);
-            
-            if([host hasSuffix:subject]) {
-                domainMatch = TRUE;
-            }
-            
-            CFRelease(summaryRef);
-        }
-        
-    }
-    
-    self.sentResponse = TRUE;
-    if (fingerprintMatch && domainMatch) {
-        CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:@"CONNECTION_SECURE"];
-        [self._plugin writeJavascript:[pluginResult toSuccessCallbackString:self._callbackId]];
-    } else {
-        CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_JSON_EXCEPTION messageAsString:@"CONNECTION_NOT_SECURE"];
-        [self._plugin writeJavascript:[pluginResult toErrorCallbackString:self._callbackId]];
+    @finally
+    {
     }
 }
 
@@ -150,7 +164,7 @@
 
 - (void)check:(CDVInvokedUrlCommand*)command {
     NSString *serverURL = [command.arguments objectAtIndex:0];
-    NSURLRequest *request = [NSURLRequest requestWithURL:[NSURL URLWithString:serverURL]];
+    NSURLRequest *request = [NSURLRequest requestWithURL:[NSURL URLWithString:serverURL] cachePolicy: NSURLRequestReloadIgnoringCacheData timeoutInterval:30.0];
     
     CustomURLConnectionDelegate *delegate =
     [[CustomURLConnectionDelegate alloc] initWithPlugin:self callbackId:command.callbackId allowedFingerprint:[command.arguments objectAtIndex:1] allowedFingerprintAlt:[command.arguments objectAtIndex:2] url:serverURL];
